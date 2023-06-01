@@ -89,12 +89,15 @@ func (fh *handler) OnTraffic(conn gnet.Conn) (action gnet.Action) {
 	ctx := conn.Context().(*connContext)
 	p.RUnlock()
 	ctx.Lock()
-	util.Try(ctx.GetPeer(conn).AsyncWrite(buf.Bytes(), nil))
+	util.Try(ctx.GetPeer(conn).AsyncWrite(buf.Bytes(), func(c gnet.Conn, err error) error {
+		bbPool.Put(buf)
+		return err
+	}))
 	ctx.Unlock()
 	return
 }
 
-func (fh *handler) OnClosed(conn gnet.Conn, _ error) (action gnet.Action) {
+func (fh *handler) OnClose(conn gnet.Conn, _ error) (action gnet.Action) {
 	p.Lock()
 	ctx := conn.Context().(*connContext)
 	conn.SetContext(nil)

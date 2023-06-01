@@ -111,12 +111,15 @@ func (bh *backendHandler) OnTraffic(backendConn gnet.Conn) (action gnet.Action) 
 	ctx := backendConn.Context().(*connContext)
 	p.RUnlock()
 	ctx.Lock()
-	util.Try(ctx.frontendConn.AsyncWrite(buf.Bytes(), nil))
+	util.Try(ctx.frontendConn.AsyncWrite(buf.Bytes(), func(c gnet.Conn, err error) error {
+		bbPool.Put(buf)
+		return err
+	}))
 	ctx.Unlock()
 	return
 }
 
-func (bh *backendHandler) OnClosed(backendConn gnet.Conn, _ error) (action gnet.Action) {
+func (bh *backendHandler) OnClose(backendConn gnet.Conn, _ error) (action gnet.Action) {
 	p.Lock()
 	ctx := backendConn.Context().(*connContext)
 	backendConn.SetContext(nil)

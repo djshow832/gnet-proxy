@@ -1,8 +1,8 @@
 module github.com/djshow832/gnet-proxy
 
-go 1.19
+go 1.20
 
-require github.com/panjf2000/gnet/v2 v2.2.5
+require github.com/panjf2000/gnet/v2 v2.2.6
 
 require (
 	github.com/panjf2000/ants/v2 v2.7.1 // indirect
