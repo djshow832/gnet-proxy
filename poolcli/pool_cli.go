@@ -2,13 +2,14 @@ package poolcli
 
 import (
 	"fmt"
+	"net"
+	"sync"
+	"time"
+
 	"github.com/djshow832/gnet-proxy/util"
 	"github.com/panjf2000/gnet/v2"
 	bbPool "github.com/panjf2000/gnet/v2/pkg/pool/bytebuffer"
 	goPool "github.com/panjf2000/gnet/v2/pkg/pool/goroutine"
-	"net"
-	"sync"
-	"time"
 )
 
 func StartPoolCliMode(port int, backends []string) {
@@ -96,6 +97,8 @@ func (fh *handler) OnTraffic(conn gnet.Conn) (action gnet.Action) {
 			p.RUnlock()
 			ctx.Lock()
 			// cannot keep order because it's asynchronous
+			// If read multiple packets from client at the same time, the packets are written async to the server.
+			// Especially when the multiple packets are processed by different workers.
 			util.Try(ctx.GetPeer(conn).AsyncWrite(buf.Bytes(), func(c gnet.Conn, err error) error {
 				bbPool.Put(buf)
 				return err
