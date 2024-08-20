@@ -2,7 +2,6 @@ package gonet
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"sync"
 
@@ -68,9 +67,21 @@ type connContext struct {
 
 func (cc *connContext) onConn() {
 	go func() {
-		io.Copy(cc.frontendConn, cc.backendConn)
+		ioCopy(cc.frontendConn, cc.backendConn)
 	}()
 	go func() {
-		io.Copy(cc.backendConn, cc.frontendConn)
+		ioCopy(cc.backendConn, cc.frontendConn)
 	}()
+}
+
+// To simulate a L7 proxy, do not use io.Copy, which calls syscall.Splice.
+func ioCopy(from, to net.Conn) {
+	var buf [1024]byte
+	for {
+		n, err := from.Read(buf[:])
+		if err != nil {
+			return
+		}
+		_, _ = to.Write(buf[:n])
+	}
 }

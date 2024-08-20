@@ -35,14 +35,19 @@ func main() {
 
 	switch mode {
 	case 0:
+		// gnet
 		srvcli.StartSrvCliMode(port, bs)
 	case 1:
+		// buggy
 		dcli.StartDoubleCliMode(port, bs)
 	case 2:
+		// buggy
 		poolcli.StartPoolCliMode(port, bs)
 	case 3:
+		// netpoll
 		netpoll.StartNetpollMode(port, bs)
 	case 4:
+		// go net
 		gonet.StartNetMode(port, bs)
 	}
 }

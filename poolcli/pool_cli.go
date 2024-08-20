@@ -43,6 +43,7 @@ func (p *Proxy) Start() {
 	for {
 		conn := util.Try(ln.Accept()).(net.Conn)
 		ctx := &connContext{}
+		// after v2.3.0, Enroll and Dial may call OnTraffic. Be careful about the lock.
 		frontendConn := util.Try(p.cli.EnrollContext(conn, ctx)).(gnet.Conn)
 		backendConn := util.Try(p.cli.DialContext("tcp", p.GetBackend(), ctx)).(gnet.Conn)
 		ctx.Lock()

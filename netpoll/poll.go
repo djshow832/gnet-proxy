@@ -39,6 +39,7 @@ func (p *Proxy) Start() {
 	listener := util.Try(netpoll.CreateListener("tcp", p.listenAddr)).(netpoll.Listener)
 	netpoll.Configure(netpoll.Config{
 		PollerNum: 1,
+		// gopool in netpoll is not a goroutine pool, it causes too many newstack().
 		Runner: func(ctx context.Context, f func()) {
 			p.gopool.Go(f)
 		},
