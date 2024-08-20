@@ -8,8 +8,7 @@ import (
 
 	"github.com/djshow832/gnet-proxy/util"
 	"github.com/panjf2000/gnet/v2"
-	bbPool "github.com/panjf2000/gnet/v2/pkg/pool/bytebuffer"
-	goPool "github.com/panjf2000/gnet/v2/pkg/pool/goroutine"
+	"github.com/tiancaiamao/gp"
 )
 
 func StartPoolCliMode(port int, backends []string) {
@@ -25,16 +24,16 @@ type Proxy struct {
 	curIndex   int
 	backends   []string
 	cli        *gnet.Client
-	workerPool *goPool.Pool
+	gopool     *gp.Pool
 }
 
 func newProxy(listenAddr string, backends []string) *Proxy {
-	cli := util.Try(gnet.NewClient(&handler{}, gnet.WithTCPKeepAlive(time.Minute))).(*gnet.Client)
+	cli := util.Try(gnet.NewClient(&handler{}, gnet.WithMulticore(true), gnet.WithTCPKeepAlive(time.Minute))).(*gnet.Client)
 	return &Proxy{
 		listenAddr: listenAddr,
 		backends:   backends,
 		cli:        cli,
-		workerPool: goPool.Default(),
+		gopool:     gp.New(100, time.Minute),
 	}
 }
 
@@ -43,22 +42,18 @@ func (p *Proxy) Start() {
 	ln := util.Try(net.Listen("tcp", p.listenAddr)).(net.Listener)
 	for {
 		conn := util.Try(ln.Accept()).(net.Conn)
-		p.Lock()
-		frontendConn := util.Try(p.cli.Enroll(conn)).(gnet.Conn)
-		backendConn := util.Try(p.cli.Dial("tcp", p.GetBackend())).(gnet.Conn)
-		ctx := &connContext{
-			frontendConn: frontendConn,
-			backendConn:  backendConn,
-		}
-		frontendConn.SetContext(ctx)
-		backendConn.SetContext(ctx)
-		p.Unlock()
+		ctx := &connContext{}
+		frontendConn := util.Try(p.cli.EnrollContext(conn, ctx)).(gnet.Conn)
+		backendConn := util.Try(p.cli.DialContext("tcp", p.GetBackend(), ctx)).(gnet.Conn)
+		ctx.Lock()
+		ctx.backendConn = backendConn
+		ctx.frontendConn = frontendConn
+		ctx.Unlock()
 	}
 }
 
 func (p *Proxy) Stop() {
 	util.Try(p.cli.Stop())
-	p.workerPool.Release()
 }
 
 func (p *Proxy) GetBackend() string {
@@ -77,10 +72,18 @@ type connContext struct {
 }
 
 func (ctx *connContext) GetPeer(conn gnet.Conn) gnet.Conn {
-	if conn == ctx.frontendConn {
-		return ctx.backendConn
+	for {
+		ctx.Lock()
+		if ctx.frontendConn == nil || ctx.backendConn == nil {
+			ctx.Unlock()
+			continue
+		}
+		defer ctx.Unlock()
+		if conn == ctx.frontendConn {
+			return ctx.backendConn
+		}
+		return ctx.frontendConn
 	}
-	return ctx.frontendConn
 }
 
 type handler struct {
@@ -88,33 +91,20 @@ type handler struct {
 }
 
 func (fh *handler) OnTraffic(conn gnet.Conn) (action gnet.Action) {
-	util.Try(p.workerPool.Submit(
+	p.gopool.Go(
 		func() {
-			buf := bbPool.Get()
-			util.Try(conn.WriteTo(buf))
-			p.RLock()
 			ctx := conn.Context().(*connContext)
-			p.RUnlock()
-			ctx.Lock()
-			// cannot keep order because it's asynchronous
-			// If read multiple packets from client at the same time, the packets are written async to the server.
-			// Especially when the multiple packets are processed by different workers.
-			util.Try(ctx.GetPeer(conn).AsyncWrite(buf.Bytes(), func(c gnet.Conn, err error) error {
-				bbPool.Put(buf)
-				return err
-			}))
-			ctx.Unlock()
-		}))
+			p.Lock()
+			buf := util.Try(conn.Next(-1)).([]byte)
+			p.Unlock()
+			peer := ctx.GetPeer(conn)
+			util.Try(peer.Write(buf))
+		})
 	return
 }
 
 func (fh *handler) OnClose(conn gnet.Conn, _ error) (action gnet.Action) {
-	p.Lock()
 	ctx := conn.Context().(*connContext)
-	conn.SetContext(nil)
-	p.Unlock()
-	ctx.Lock()
 	util.Try(ctx.GetPeer(conn).Close())
-	ctx.Unlock()
 	return
 }

@@ -2,12 +2,13 @@ package dcli
 
 import (
 	"fmt"
-	"github.com/djshow832/gnet-proxy/util"
-	"github.com/panjf2000/gnet/v2"
-	bbPool "github.com/panjf2000/gnet/v2/pkg/pool/bytebuffer"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/djshow832/gnet-proxy/util"
+	"github.com/panjf2000/gnet/v2"
+	bbPool "github.com/panjf2000/gnet/v2/pkg/pool/bytebuffer"
 )
 
 func StartDoubleCliMode(port int, backends []string) {
@@ -26,7 +27,7 @@ type Proxy struct {
 }
 
 func newProxy(listenAddr string, backends []string) *Proxy {
-	cli := util.Try(gnet.NewClient(&handler{}, gnet.WithTCPKeepAlive(time.Minute))).(*gnet.Client)
+	cli := util.Try(gnet.NewClient(&handler{}, gnet.WithMulticore(true), gnet.WithTCPKeepAlive(time.Minute))).(*gnet.Client)
 	return &Proxy{
 		listenAddr: listenAddr,
 		backends:   backends,
@@ -82,6 +83,7 @@ type handler struct {
 	*gnet.BuiltinEventEngine
 }
 
+// Without go pool, only one P is used.
 func (fh *handler) OnTraffic(conn gnet.Conn) (action gnet.Action) {
 	buf := bbPool.Get()
 	util.Try(conn.WriteTo(buf))
@@ -89,11 +91,9 @@ func (fh *handler) OnTraffic(conn gnet.Conn) (action gnet.Action) {
 	ctx := conn.Context().(*connContext)
 	p.RUnlock()
 	ctx.Lock()
-	util.Try(ctx.GetPeer(conn).AsyncWrite(buf.Bytes(), func(c gnet.Conn, err error) error {
-		bbPool.Put(buf)
-		return err
-	}))
+	util.Try(ctx.GetPeer(conn).Write(buf.Bytes()))
 	ctx.Unlock()
+	bbPool.Put(buf)
 	return
 }
 

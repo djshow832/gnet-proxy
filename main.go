@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
-	"runtime"
 	"strings"
 
 	"github.com/djshow832/gnet-proxy/dcli"
+	"github.com/djshow832/gnet-proxy/gonet"
 	"github.com/djshow832/gnet-proxy/netpoll"
 	"github.com/djshow832/gnet-proxy/poolcli"
 	"github.com/djshow832/gnet-proxy/srvcli"
@@ -16,8 +16,6 @@ import (
 )
 
 func main() {
-	runtime.GOMAXPROCS(1)
-
 	var port int
 	var statusPort int
 	var mode int
@@ -44,5 +42,7 @@ func main() {
 		poolcli.StartPoolCliMode(port, bs)
 	case 3:
 		netpoll.StartNetpollMode(port, bs)
+	case 4:
+		gonet.StartNetMode(port, bs)
 	}
 }

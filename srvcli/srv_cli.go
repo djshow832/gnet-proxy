@@ -2,12 +2,12 @@ package srvcli
 
 import (
 	"fmt"
+	"sync"
+	"time"
+
 	"github.com/djshow832/gnet-proxy/util"
 	"github.com/panjf2000/gnet/v2"
 	bbPool "github.com/panjf2000/gnet/v2/pkg/pool/bytebuffer"
-	_ "net/http/pprof"
-	"sync"
-	"time"
 )
 
 func StartSrvCliMode(port int, backends []string) {
@@ -111,11 +111,9 @@ func (bh *backendHandler) OnTraffic(backendConn gnet.Conn) (action gnet.Action) 
 	ctx := backendConn.Context().(*connContext)
 	p.RUnlock()
 	ctx.Lock()
-	util.Try(ctx.frontendConn.AsyncWrite(buf.Bytes(), func(c gnet.Conn, err error) error {
-		bbPool.Put(buf)
-		return err
-	}))
+	util.Try(ctx.frontendConn.Write(buf.Bytes()))
 	ctx.Unlock()
+	bbPool.Put(buf)
 	return
 }
 
