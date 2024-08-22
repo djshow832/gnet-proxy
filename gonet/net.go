@@ -67,32 +67,42 @@ type connContext struct {
 
 func (cc *connContext) onConn() {
 	go func() {
+		var buf [4096]byte
 		for {
 			// need to disable ssl
-			forwardPkt(cc.backendConn, cc.frontendConn)
-			forwardPkt(cc.frontendConn, cc.backendConn)
+			if !forwardPkt(cc.backendConn, cc.frontendConn, buf[:]) {
+				return
+			}
+			if !forwardPkt(cc.frontendConn, cc.backendConn, buf[:]) {
+				return
+			}
 		}
 	}()
 }
 
-func forwardPkt(from, to net.Conn) {
-	var buf [4096]byte
+func forwardPkt(from, to net.Conn, buf []byte) bool {
 	idx := 0
 	for idx < 4 {
 		n, err := from.Read(buf[idx:])
 		if err != nil {
-			return
+			return false
 		}
 		idx += n
 	}
 
 	length := int(buf[0]) | int(buf[1])<<8 | int(buf[2])<<16
+	data := buf[:]
+	if length+4 > len(buf) {
+		data = make([]byte, length+4)
+		copy(data[:], buf[:idx])
+	}
 	for idx < length+4 {
-		n, err := from.Read(buf[idx:])
+		n, err := from.Read(data[idx:])
 		if err != nil {
-			return
+			return false
 		}
 		idx += n
 	}
 	_, _ = to.Write(buf[:idx])
+	return true
 }

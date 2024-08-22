@@ -68,44 +68,63 @@ type connContext struct {
 
 func (cc *connContext) onConn() {
 	go func() {
-		forwardPkt(cc.backendConn, cc.frontendConn)
+		var buf [4096]byte
+		if !forwardPkt(cc.backendConn, cc.frontendConn, buf[:], false) {
+			return
+		}
 		for {
 			// need to disable ssl
-			forwardPkt(cc.frontendConn, cc.backendConn)
-			forwardPkt(cc.backendConn, cc.frontendConn)
+			if !forwardPkt(cc.frontendConn, cc.backendConn, buf[:], true) {
+				return
+			}
+			if !forwardPkt(cc.backendConn, cc.frontendConn, buf[:], true) {
+				return
+			}
 		}
 	}()
 }
 
-func forwardPkt(from, to net.Conn) {
-	var buf [4096]byte
+func forwardPkt(from, to net.Conn, buf []byte, rawcall bool) bool {
 	idx := 0
 	done := false
 	rawConn := util.Try(from.(syscall.Conn).SyscallConn()).(syscall.RawConn)
 	for idx < 4 {
 		var n int
-		err := rawConn.Read(func(fd uintptr) bool {
-			if done {
-				var readErr error
-				n, readErr = syscall.Read(int(fd), buf[idx:])
-				return readErr == nil
+		var err, readErr error
+		if rawcall {
+			err = rawConn.Read(func(fd uintptr) bool {
+				if done {
+					n, readErr = syscall.Read(int(fd), buf[idx:])
+					return readErr != syscall.EAGAIN
+				}
+				done = true
+				return false
+			})
+			if err == nil {
+				err = readErr
 			}
-			done = true
-			return false
-		})
+		} else {
+			n, err = from.Read(buf[idx:])
+		}
 		if err != nil {
-			return
+			return false
 		}
 		idx += n
 	}
 
 	length := int(buf[0]) | int(buf[1])<<8 | int(buf[2])<<16
+	data := buf[:]
+	if length+4 > len(buf) {
+		data = make([]byte, length+4)
+		copy(data[:], buf[:idx])
+	}
 	for idx < length+4 {
-		n, err := from.Read(buf[idx:])
+		n, err := from.Read(data[idx:])
 		if err != nil {
-			return
+			return false
 		}
 		idx += n
 	}
-	_, _ = to.Write(buf[:idx])
+	_, err := to.Write(data[:idx])
+	return err == nil
 }
