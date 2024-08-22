@@ -1,9 +1,10 @@
-package gonet
+package rawread
 
 import (
 	"fmt"
 	"net"
 	"sync"
+	"syscall"
 
 	"github.com/djshow832/gnet-proxy/util"
 )
@@ -67,10 +68,11 @@ type connContext struct {
 
 func (cc *connContext) onConn() {
 	go func() {
+		forwardPkt(cc.backendConn, cc.frontendConn)
 		for {
 			// need to disable ssl
-			forwardPkt(cc.backendConn, cc.frontendConn)
 			forwardPkt(cc.frontendConn, cc.backendConn)
+			forwardPkt(cc.backendConn, cc.frontendConn)
 		}
 	}()
 }
@@ -78,8 +80,19 @@ func (cc *connContext) onConn() {
 func forwardPkt(from, to net.Conn) {
 	var buf [4096]byte
 	idx := 0
+	done := false
+	rawConn := util.Try(from.(syscall.Conn).SyscallConn()).(syscall.RawConn)
 	for idx < 4 {
-		n, err := from.Read(buf[idx:])
+		var n int
+		err := rawConn.Read(func(fd uintptr) bool {
+			if done {
+				var readErr error
+				n, readErr = syscall.Read(int(fd), buf[idx:])
+				return readErr == nil
+			}
+			done = true
+			return false
+		})
 		if err != nil {
 			return
 		}

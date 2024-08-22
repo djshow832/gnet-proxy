@@ -11,6 +11,7 @@ import (
 	"github.com/djshow832/gnet-proxy/gonet"
 	"github.com/djshow832/gnet-proxy/netpoll"
 	"github.com/djshow832/gnet-proxy/poolcli"
+	"github.com/djshow832/gnet-proxy/rawread"
 	"github.com/djshow832/gnet-proxy/srvcli"
 	"github.com/djshow832/gnet-proxy/util"
 )
@@ -49,5 +50,7 @@ func main() {
 	case 4:
 		// go net
 		gonet.StartNetMode(port, bs)
+	case 5:
+		rawread.StartNetMode(port, bs)
 	}
 }
