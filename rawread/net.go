@@ -2,9 +2,14 @@ package rawread
 
 import (
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"sync"
 	"syscall"
+	"time"
+
+	"errors"
 
 	"github.com/djshow832/gnet-proxy/util"
 )
@@ -69,45 +74,67 @@ type connContext struct {
 func (cc *connContext) onConn() {
 	go func() {
 		var buf [4096]byte
-		if !forwardPkt(cc.backendConn, cc.frontendConn, buf[:], false) {
+		var err error
+		lastWriteTime := time.Time{}
+		if lastWriteTime, err = forwardPkt(cc.backendConn, cc.frontendConn, buf[:], false, lastWriteTime); err != nil {
 			return
 		}
 		for {
 			// need to disable ssl
-			if !forwardPkt(cc.frontendConn, cc.backendConn, buf[:], true) {
+			if lastWriteTime, err = forwardPkt(cc.frontendConn, cc.backendConn, buf[:], true, lastWriteTime); err != nil {
+				println("relay fail", err.Error())
 				return
 			}
-			if !forwardPkt(cc.backendConn, cc.frontendConn, buf[:], true) {
+			if lastWriteTime, err = forwardPkt(cc.backendConn, cc.frontendConn, buf[:], true, lastWriteTime); err != nil {
+				println("relay fail", err.Error())
 				return
 			}
 		}
 	}()
 }
 
-func forwardPkt(from, to net.Conn, buf []byte, rawcall bool) bool {
+func forwardPkt(from, to net.Conn, buf []byte, rawcall bool, lastWriteTime time.Time) (time.Time, error) {
 	idx := 0
-	done := false
 	rawConn := util.Try(from.(syscall.Conn).SyscallConn()).(syscall.RawConn)
+	first := true
 	for idx < 4 {
 		var n int
 		var err, readErr error
 		if rawcall {
+			from.SetReadDeadline(time.Time{})
 			err = rawConn.Read(func(fd uintptr) bool {
-				if done {
-					n, readErr = syscall.Read(int(fd), buf[idx:])
-					return readErr != syscall.EAGAIN
+				if first {
+					first = false
+					now := time.Now()
+					if now.Sub(lastWriteTime) < 30*time.Microsecond {
+						from.SetReadDeadline(now.Add(3 * time.Millisecond))
+						return false
+					}
 				}
-				done = true
-				return false
+				n, readErr = syscall.Read(int(fd), buf[idx:])
+				done := readErr != syscall.EAGAIN
+				if readErr != nil && done {
+					println("read error", readErr.Error())
+				}
+				return done
 			})
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				continue
+			}
 			if err == nil {
 				err = readErr
+			}
+			if err != nil {
+				from.SetReadDeadline(time.Time{})
 			}
 		} else {
 			n, err = from.Read(buf[idx:])
 		}
 		if err != nil {
-			return false
+			return lastWriteTime, err
+		}
+		if n == 0 {
+			return lastWriteTime, io.EOF
 		}
 		idx += n
 	}
@@ -121,10 +148,11 @@ func forwardPkt(from, to net.Conn, buf []byte, rawcall bool) bool {
 	for idx < length+4 {
 		n, err := from.Read(data[idx:])
 		if err != nil {
-			return false
+			return lastWriteTime, err
 		}
 		idx += n
 	}
+	lastWriteTime = time.Now()
 	_, err := to.Write(data[:idx])
-	return err == nil
+	return lastWriteTime, err
 }
