@@ -51,6 +51,7 @@ func main() {
 		// go net
 		gonet.StartNetMode(port, bs)
 	case 5:
+		// raw read
 		rawread.StartNetMode(port, bs)
 	}
 }
