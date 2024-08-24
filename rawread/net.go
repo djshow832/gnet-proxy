@@ -93,28 +93,40 @@ func (cc *connContext) onConn() {
 	}()
 }
 
+type temp struct {
+	buf           []byte
+	idx           int
+	n             int
+	lastWriteTime time.Time
+	from          net.Conn
+	readErr       error
+	first         bool
+}
+
 func forwardPkt(from, to net.Conn, buf []byte, rawcall bool, lastWriteTime time.Time) (time.Time, error) {
-	idx := 0
+	var tmp temp
+	tmp.first = true
+	tmp.lastWriteTime = lastWriteTime
+	tmp.from = from
+	tmp.buf = buf
 	rawConn := util.Try(from.(syscall.Conn).SyscallConn()).(syscall.RawConn)
-	first := true
-	for idx < 4 {
-		var n int
-		var err, readErr error
+	for tmp.idx < 4 {
+		var err error
 		if rawcall {
 			from.SetReadDeadline(time.Time{})
 			err = rawConn.Read(func(fd uintptr) bool {
-				if first {
-					first = false
+				if tmp.first {
+					tmp.first = false
 					now := time.Now()
-					if now.Sub(lastWriteTime) < 30*time.Microsecond {
-						from.SetReadDeadline(now.Add(3 * time.Millisecond))
+					if now.Sub(tmp.lastWriteTime) < 30*time.Microsecond {
+						tmp.from.SetReadDeadline(now.Add(3 * time.Millisecond))
 						return false
 					}
 				}
-				n, readErr = syscall.Read(int(fd), buf[idx:])
-				done := readErr != syscall.EAGAIN
-				if readErr != nil && done {
-					println("read error", readErr.Error())
+				tmp.n, tmp.readErr = syscall.Read(int(fd), tmp.buf[tmp.idx:])
+				done := tmp.readErr != syscall.EAGAIN
+				if tmp.readErr != nil && done {
+					println("read error", tmp.readErr.Error())
 				}
 				return done
 			})
@@ -122,37 +134,37 @@ func forwardPkt(from, to net.Conn, buf []byte, rawcall bool, lastWriteTime time.
 				continue
 			}
 			if err == nil {
-				err = readErr
+				err = tmp.readErr
 			}
 			if err != nil {
 				from.SetReadDeadline(time.Time{})
 			}
 		} else {
-			n, err = from.Read(buf[idx:])
+			tmp.n, err = from.Read(buf[tmp.idx:])
 		}
 		if err != nil {
 			return lastWriteTime, err
 		}
-		if n == 0 {
+		if tmp.n == 0 {
 			return lastWriteTime, io.EOF
 		}
-		idx += n
+		tmp.idx += tmp.n
 	}
 
 	length := int(buf[0]) | int(buf[1])<<8 | int(buf[2])<<16
 	data := buf[:]
 	if length+4 > len(buf) {
 		data = make([]byte, length+4)
-		copy(data[:], buf[:idx])
+		copy(data[:], buf[:tmp.idx])
 	}
-	for idx < length+4 {
-		n, err := from.Read(data[idx:])
+	for tmp.idx < length+4 {
+		n, err := from.Read(data[tmp.idx:])
 		if err != nil {
 			return lastWriteTime, err
 		}
-		idx += n
+		tmp.idx += n
 	}
 	lastWriteTime = time.Now()
-	_, err := to.Write(data[:idx])
+	_, err := to.Write(data[:tmp.idx])
 	return lastWriteTime, err
 }
